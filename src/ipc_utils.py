@@ -12,7 +12,7 @@ from awsiot.greengrasscoreipc.model import (QOS, GetConfigurationRequest,
                                             PublishToTopicRequest,
                                             SubscribeToIoTCoreRequest,
                                             SubscribeToTopicRequest,
-                                            UnauthorizedError)
+                                            UnauthorizedError, SubscriptionResponseMessage)
 
 from src import utils
 
@@ -130,6 +130,15 @@ class IPCUtils:
         except Exception:
             logger.exception(
                 'Exception while subscribing to IoT core topic: %s', topic)
+
+    def parse_subscription_response_message(event: SubscriptionResponseMessage) -> (str, dict):
+        if event.binary_message is None:
+            received_payload = event.json_message.message
+            topic = event.json_message.context.topic
+        else:
+            received_payload = json.loads(event.binary_message.message)
+            topic = event.binary_message.context.topic
+        return topic, received_payload
 
 
 # Get the ipc client
