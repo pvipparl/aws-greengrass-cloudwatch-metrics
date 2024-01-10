@@ -10,6 +10,7 @@ from awsiot.greengrasscoreipc.model import (IoTCoreMessage,
                                             SubscriptionResponseMessage)
 
 from src import ipc_utils, utils
+from src.ipc_utils import IPCUtils
 from src.metric.manager import MetricsManager
 from src.request import PutMetricRequest
 
@@ -29,16 +30,16 @@ if utils.PUBLISH_INTERVAL_SEC_KEY in config:
         publish_interval = int(config[utils.PUBLISH_INTERVAL_SEC_KEY])
     except (ValueError, TypeError):
         logger.warning("Invalid PublishInterval type. Using the default PublishInterval value: %s"
-                    , utils.DEFAULT_PUBLISH_INTERVAL_SEC)
+                       , utils.DEFAULT_PUBLISH_INTERVAL_SEC)
         publish_interval = utils.DEFAULT_PUBLISH_INTERVAL_SEC
 
     if publish_interval > utils.MAX_PUBLISH_INTERVAL_SEC:
         logger.warning("PublishInterval can not be more than %s seconds, setting it to max value"
-                    , utils.MAX_PUBLISH_INTERVAL_SEC)
+                       , utils.MAX_PUBLISH_INTERVAL_SEC)
         publish_interval = utils.MAX_PUBLISH_INTERVAL_SEC
     if publish_interval < 0:
         logger.warning("Invalid PublishInterval value. Using the default PublishInterval value: %s"
-                    , utils.DEFAULT_PUBLISH_INTERVAL_SEC)
+                       , utils.DEFAULT_PUBLISH_INTERVAL_SEC)
         publish_interval = utils.DEFAULT_PUBLISH_INTERVAL_SEC
     PUBLISH_INTERVAL_SEC = publish_interval
 else:
@@ -49,12 +50,12 @@ if utils.MAX_METRICS_KEY in config:
         max_metrics = int(config[utils.MAX_METRICS_KEY])
     except (ValueError, TypeError):
         logger.warning("Invalid MaxMetricsToRetain type. Using the default MaxMetricsToRetain value: %s"
-                    , utils.DEFAULT_MAX_METRICS)
+                       , utils.DEFAULT_MAX_METRICS)
         max_metrics = utils.DEFAULT_MAX_METRICS
 
     if max_metrics < utils.MIN_MAX_METRICS:
         logger.warning("MaxMetricsToRetain can not be less than %s metrics, setting it to least value"
-                    , utils.MIN_MAX_METRICS)
+                       , utils.MIN_MAX_METRICS)
         max_metrics = utils.MIN_MAX_METRICS
     MAX_METRICS = max_metrics
 else:
@@ -92,7 +93,6 @@ metrics_manager = MetricsManager(
 
 
 def main():
-
     # Subscribe to IoT Core topic
     if pubsub_to_iot_core:
         ipc.subscribe_to_iot_topic(INPUT_TOPIC, IoTCoreStreamHandler())
@@ -102,9 +102,9 @@ def main():
 
 
 def put_metrics(metric_request):
-    metric_request.add_dimension('coreName', utils.GG_CORE_NAME)
-    metrics_manager.add_metric(
-        metric_request.namespace, metric_request.metric_datum)
+    for single_metric_datum in metric_request.metric_datum:
+        single_metric_datum['Dimensions'].append({'Name': 'coreName', 'Value': utils.GG_CORE_NAME})
+        metrics_manager.add_metric(metric_request.namespace, single_metric_datum)
 
 
 class PubSubStreamHandler(client.SubscribeToTopicStreamHandler):
@@ -113,10 +113,17 @@ class PubSubStreamHandler(client.SubscribeToTopicStreamHandler):
 
     def on_stream_event(self, event: SubscriptionResponseMessage) -> None:
         try:
-            message = event.json_message.message
+            topic, message = IPCUtils.parse_subscription_response_message(event)
             logger.debug("Received new message: %s", message)
-            metric_request = PutMetricRequest(message)
-            put_metrics(metric_request)
+            # Check if the message is an array of metrics
+            if isinstance(message, list):
+                for single_metric in message:
+                    metric_request = PutMetricRequest(single_metric)
+                    put_metrics(metric_request)
+            else:
+                # Existing code for single metric
+                metric_request = PutMetricRequest(message)
+                put_metrics(metric_request)
         except Exception as e:
             logger.exception("Error putting metrics to Cloudwatch: ")
             response = utils.generate_error_response(
@@ -141,8 +148,15 @@ class IoTCoreStreamHandler(client.SubscribeToIoTCoreStreamHandler):
             message = event.message.payload.decode('utf-8')
             dict_message = json.loads(message)
             logger.debug("Received new message: %s", message)
-            metric_request = PutMetricRequest(dict_message)
-            put_metrics(metric_request)
+            # Check if the message is an array of metrics
+            if isinstance(dict_message, list):
+                for single_metric in dict_message:
+                    metric_request = PutMetricRequest(single_metric)
+                    put_metrics(metric_request)
+            else:
+                # Existing code for single metric
+                metric_request = PutMetricRequest(dict_message)
+                put_metrics(metric_request)
         except Exception as e:
             logger.exception("Error putting metrics to Cloudwatch: ")
             response = utils.generate_error_response(
